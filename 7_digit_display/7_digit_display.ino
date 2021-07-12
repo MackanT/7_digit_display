@@ -27,32 +27,54 @@
  */
 
 //  -- Used Packages --
+#include <DHT.h>
+#include <DHT_U.h>
 #include <FastLED.h>
 #include <Wire.h>
 #include "RTClib.h"
 #include <SoftwareSerial.h>
 #include "Timer.h"
+#include <stdlib.h>
 
 // -- Hardware Constants --
 #define NUM_LEDS 86
-#define DATA_PIN 5
+#define DATA_PIN 5 // D5
+#define RX_PIN 8 // D8
+#define TX_PIN 9 // D9
+#define BD_SE 9600
+#define BD_BT 9600
+#define DHTPIN 12 //D12
+#define DHTTYPE DHT22
+
+// LED digit start num
+#define p1 65
+#define p2 44
+#define p3 21
+#define p4 0
 
 // -- Defines Special Variables --
 CRGB LED[NUM_LEDS];
-RTC_DS3231 rtc;
+RTC_DS3231 rtc; // SDA = A4, SCL = A5
 Timer t_clock;
 CRGB cOff = CRGB::Black;
-CRGB cOn = CRGB::Green;
+CRGB cOn = CRGB(0, 150, 150);
+SoftwareSerial BT_Serial(RX_PIN, TX_PIN);
+DHT dht(DHTPIN, DHTTYPE);
 
 
 // -- Define Default Variables --
 int i;
-String btBuffer;
+char input[9];
+char bt_buffer[4];
+int color[3];
+int mode = 0;
 
   
 void setup() { 
   FastLED.addLeds<WS2812B, DATA_PIN, RGB>(LED, NUM_LEDS);  // GRB ordering is typical
-  Serial.begin(9600);
+  Serial.begin(BD_SE);
+  BT_Serial.begin(BD_BT);
+  dht.begin();
 
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
@@ -64,59 +86,112 @@ void setup() {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
-  t_clock.every(1000, DisplayTime);
-  DisplayTime();
+  bt_buffer[3] = 0;
+
+  t_clock.every(1000, updateDisplay);
+  updateDisplay();
   
 }
 
 void loop() { 
   t_clock.update();
+  check_bt();
 }
 
-void DisplayTime(){
-    DateTime now = rtc.now();
-      
-    int h  = now.hour();
-    int hl = (h / 10) == 0 ? 13 : (h / 10);
-    int hr = h % 10;
-    int ml = now.minute() / 10;
-    int mr = now.minute() % 10;
+void check_bt(){
+
+  switch (read_one_byte()) {
+    case 'k':
+      mode = 0;
+      break;
+    case 't':
+      mode = 1;
+      break;
+    case 'h':
+      mode = 2;
+      break;
+    case 'c':
+    
+      delay(100);
+      for (i = 0; i < 9; i++) input[i] = read_one_byte();
   
-    displaySegments(65, mr);    
-    displaySegments(44, ml);
-    displaySegments(21, hr);    
-    displaySegments(0, hl);  
-    displayDots(0);  
-    FastLED.show();
+      for (i = 0; i < 9; i++) {
+        bt_buffer[0] = input[i++];
+        bt_buffer[1] = input[i++];
+        bt_buffer[2] = input[i];
+        color[i/3] = atoi(bt_buffer);
+        Serial.println(color[i/3]);
+      }
+  
+      for (i = 0; i < 3; i++){
+        if (color[i] > 255 || color[i] < 0){
+          Serial.println("Error!");
+          return;
+        }
+      }
+  
+      cOn = CRGB(color[1], color[0], color[2]);
+  }
+  
 }
 
-void displayDots(int dotMode) {
+char read_one_byte(){
+  
+    //from bluetooth to Terminal. 
+    if (BT_Serial.available()) 
+      return BT_Serial.read(); 
+    else {
+      return 0;
+    }
+}
 
-  LED[42] = (LED[42] == cOff) ? cOn : cOff;
-  LED[43] = (LED[43] == cOff) ? cOn : cOff;
+void updateDisplay(){
+  switch (mode) {
+    case 0:
+      displayClock();
+      break;
+    default:
+      displayHT();
+      break;
+  }
   FastLED.show();
-  // dotMode: 0=Both on, 1=Both Off, 2=Bottom On, 3=Blink
-  //  switch (dotMode) {
-  //    case 0:
-  //      LED[14] = colorMODE == 0 ? colorCRGB : colorCHSV;
-  //      LED[15] = colorMODE == 0 ? colorCRGB : colorCHSV; 
-  //      break;
-  //    case 1:
-  //      LED[14] = colorOFF;
-  //      LED[15] = colorOFF; 
-  //      break;
-  //    case 2:
-  //      LED[14] = colorOFF;
-  //      LED[15] = colorMODE == 0 ? colorCRGB : colorCHSV; 
-  //      break;
-  //    case 3:
-  //      LED[14] = (LED[14] == colorOFF) ? (colorMODE == 0 ? colorCRGB : colorCHSV) : colorOFF;
-  //      LED[15] = (LED[15] == colorOFF) ? (colorMODE == 0 ? colorCRGB : colorCHSV) : colorOFF;
-  //      FastLED.show();  
-  //      break;
-  //    default:
-  //      break;    
-  //  }
+
+}
+
+void displayClock(){
+    DateTime now = rtc.now();
+    int h  = now.hour();
+
+    // Set digits
+    displaySegments(p1, now.minute() % 10);    
+    displaySegments(p2, now.minute() / 10);
+    displaySegments(p3, h % 10);    
+    displaySegments(p4, (h / 10) == 0 ? 13 : (h / 10));  
+
+    // Blink dots
+    LED[42] = (LED[42] == cOff) ? cOn : cOff;
+    LED[43] = (LED[43] == cOff) ? cOn : cOff;
+}
+
+void displayHT() {
+
+  float temp = mode == 1 ? dht.readTemperature() : dht.readHumidity();
+  int p1_val = mode == 1 ? 11 : 12;
+  
+  if (isnan(temp)) {
+    Serial.println("Failed to read from DHT sensor!");
+  } else {
+
+    // Set digits
+    displaySegments(p1, p1_val);    
+    displaySegments(p2, 10);
+    displaySegments(p3, ((int)temp) % 10);    
+    displaySegments(p4, temp / 10);
+  }
+
+  // Disable dots
+  LED[42] = cOff;
+  LED[43] = cOff;
 }
 
 void displaySegments(int startindex, int number) {
@@ -142,6 +217,6 @@ void displaySegments(int startindex, int number) {
   for (int i = 0; i < 7; i++) {
     LED[3*i + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? cOn : cOff;
     // LED[3*i + 1 + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? cOn : cOff;
-    // LED[3*i + 2 + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? cOn : cOff;
+    LED[3*i + 2 + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? cOn : cOff;
   } 
 }
