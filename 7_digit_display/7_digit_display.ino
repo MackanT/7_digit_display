@@ -26,6 +26,7 @@
  * 
  */
 
+
 //  -- Used Packages --
 #include <DHT.h>
 #include <DHT_U.h>
@@ -37,16 +38,21 @@
 #include <stdlib.h>
 
 // -- Hardware c_onstants --
-#define NUM_LEDS 86
-#define DATA_PIN 5 // D5
-#define RX_PIN 8 // D8
-#define TX_PIN 9 // D9
-#define BD_SE 9600
-#define BD_BT 9600
-#define DHTPIN 12 //D12
-#define DHTTYPE DHT22
+#define NUM_LEDS 86                   // Number of LEDs in clock
+
+#define DATA_PIN 6                    // D6
+
+#define RX_PIN 8                      // D8
+#define TX_PIN 9                      // D9
+
+#define BD_SE 9600                    // Baudrate local serial when debugging
+#define BD_BT 9600                    // Baudrate BT-communication
+
+#define DHTTYPE DHT22                 // Temp and humidity hardware
+#define DHTPIN 12                     // D12
 
 // LED digit start num
+// LED number that corresponds to the respective 1st, 2nd, 3rd and 4th digit
 #define P1 65
 #define P2 44
 #define P3 21
@@ -60,12 +66,16 @@
 
 // -- Defines Special Variables --
 CRGB LED[NUM_LEDS];
-RTC_DS3231 rtc; // SDA = A4, SCL = A5
-Timer t_clock;
 CRGB c_off = CRGB::Black;
 CRGB c_saved = CRGB(GREEN, RED, BLUE);
 CRGB c_on = c_saved;
+
+RTC_DS3231 rtc;                       // SDA = A4, SCL = A5
+
+Timer t_clock;                        // Automatically updates clock face w. time
+
 SoftwareSerial bt_serial(RX_PIN, TX_PIN);
+
 DHT dht(DHTPIN, DHTTYPE);
 
 
@@ -74,9 +84,10 @@ int i;
 char input[9];
 char bt_buffer[4];
 char time_read[3];
-int time_set[4] = {07, 00, 22, 00}; // Default time to be awake
-int color[3] = {RED, GREEN, BLUE};
-int mode = 0;
+int time_set[4] = {07, 00, 22, 00};   // Default time to be awake
+int color[3] = {RED, GREEN, BLUE};    // Saved LED color
+int enabled[3] = {1, 0, 1};           // Saved LED states
+int mode = 0;                         // State, time, temp, humid
 
   
 void setup() { 
@@ -95,6 +106,7 @@ void setup() {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
+  // Sets "extra" array position to 0 to avoid errors
   bt_buffer[3] = 0;
   time_read[2] = 0;
 
@@ -123,6 +135,10 @@ void read_bt(){
     case 'h':
       mode = 2;
       break;
+    // Help
+    case 'q':
+      print_help();
+      break;
     // Change Color
     case 'c':
       read_bt_color();
@@ -131,9 +147,21 @@ void read_bt(){
     case 'z':
       read_bt_time();
       break;
+    // Change active LED's
+    case 'l':
+      read_bt_light();
+      break;
+    // Set new clock time
+    case 'r':
+      set_time();
+      break;
+    // Ask system for info
     case '?':
       delay(100);
       switch (read_one_byte()) {
+        case 'k':
+          print_time();
+          break;
         case 't':
           print_temp();
           break;
@@ -146,33 +174,61 @@ void read_bt(){
         case 'z':
           print_awake();
           break;
+        case 'l':
+          print_enabled();
+          break;
       }
      break;
   }
 }
 
+// Prints help info
+void print_help(){
+  bt_serial.println(F("- List of current functions - \n"));
+  bt_serial.println(F("- 'q' - Prints list of all commands"));
+  bt_serial.println(F("- 'k' - Sets clock to display current time"));
+  bt_serial.println(F("- 't' - Sets clock to display current temperature"));
+  bt_serial.println(F("- 'h' - Sets clock to display current humidity"));
+  bt_serial.println(F("- 'cxxxyyyzzz' - Sets the display color to R(xxx),G(yyy),B(zzz)"));
+  bt_serial.println(F("- 'zxxxxyyyy' - Disables lights outside of time xxxx:yyyy"));
+  bt_serial.println(F("- '?X' - Replace X with k, t, h, c or z to get systems current respective value"));
+  bt_serial.println(F("- 'rhhmmss' - Sets time module to hh:mm:ss"));
+}
+
 // Prints temperature to BT-controller
 void print_temp(){
-  char msg[25];
-  sprintf(msg, "Current Temperature: ");
-  bt_serial.print(msg);
-  bt_serial.println(dht.readTemperature());
+  bt_serial.print(F("Current Temperature: "));
+  bt_serial.print(dht.readTemperature());
   bt_serial.println("c");
 }
 
 // Prints humidity to BT-controller
 void print_humid(){
-  char msg[22];
-  sprintf(msg, "Current Humidity: ");
-  bt_serial.print(msg);
+  bt_serial.print(F("Current Humidity: "));
   bt_serial.print(dht.readHumidity());
   bt_serial.println("%");
+}
+
+// Prints time to BT-controller
+void print_time(){
+    char msg[24];
+    DateTime now = rtc.now();
+    sprintf(msg, "Current System Time: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
+    bt_serial.println(msg);
+
 }
 
 // Prints sleep/awake times to BT-controller
 void print_awake(){
   char msg[25];
   sprintf(msg, "Time Awake: %02d:%02d - %02d:%02d", time_set[0], time_set[1], time_set[2], time_set[3]);
+  bt_serial.println(msg);
+}
+
+// Prints enables/disabled LED's
+void print_enabled(){
+  char msg[25];
+  sprintf(msg, "Lights enabled: %01d, %01d, %01d", enabled[0], enabled[1], enabled[2]);
   bt_serial.println(msg);
 }
 
@@ -183,37 +239,45 @@ void print_color(){
   bt_serial.println(msg);
 }
 
+// Reads input real time from the BT-Device and sets clock accordingly as hhmmss
+void set_time(){
+  delay(100);
+  int input_num[3]; 
+  for (i = 0; i < 3; i++) {
+    input_num[i] = get_num(2);
+    if (input_num[i] >= 60 or input_num[i] < 0) return;  
+  }
+  if (input_num[0] > 24) return;
+  rtc.adjust(DateTime(2021, 01, 01, input_num[0], input_num[1], input_num[2]));
+   
+}
+
+// Converts n chars into integer ab. i.e, a=1, b=2 returns 12
+int get_num(int a){
+  int ret = 0;
+  for(int j = a; j > 0; j--) ret += pow(10,j - 1)*(read_one_byte() - '0');
+  return ret;
+}
+
+
 // Read input time from the BT-Device
 // Sets sleep time through: zXXXXXXXX, reads the 8 "X"'s and converts it into hhmm_1 and hhmm_2
 void read_bt_time(){
   delay(100);
-  for (i = 0; i < 8; i++) input[i] = read_one_byte();
+  for (i = 0; i < 4; i++) time_set[i] = get_num(2); 
 
-  for (i = 0; i < 8; i++) {
-    time_read[0] = input[i++];
-    time_read[1] = input[i];
-    time_set[(i-1)/2] = atoi(time_read);
-  }
 }
 
 // Read input color from the BT-Device
 // Sets diode color thorugh: cXXXXXXXXX, reads the 9 "X"'s and converts it into RRR, GGG and BBB RGB-codes
 void read_bt_color(){
   delay(100);
-  for (i = 0; i < 9; i++) input[i] = read_one_byte();
-
-  for (i = 0; i < 9; i++) {
-    bt_buffer[0] = input[i++];
-    bt_buffer[1] = input[i++];
-    bt_buffer[2] = input[i];
-    color[i/3] = atoi(bt_buffer);
-  }
-
-  // Checks if inputed values are valid, sets it to 0 else
-  for (i = 0; i < 3; i++){
+  for (i = 0; i < 3; i++) {
+    color[i] = get_num(3) + 1;
+    // Checks if inputed values are valid, sets it to 0 else
     if (color[i] > 255 || color[i] < 0){
       color[i] = 0;
-      bt_serial.println("Error!");
+      bt_serial.println(F("Error! Color val outside of range, setting to 0"));
     }
   }
 
@@ -222,9 +286,20 @@ void read_bt_color(){
   
 }
 
+// Read input light number from the BT-Device
+// Enables LEDS on/off through: lXXX, reads the 0 "X"'s and converts to 0 or 1 to enable/disable lights
+void read_bt_light(){
+  delay(100);
+  for (i = 0; i < 3; i++) {
+    char temp = read_one_byte();
+    if (temp == '0') enabled[i] = 0;
+    else if (temp == '1') enabled[i] = 1;
+  }
+}
+
+
 // Read one byte from the BT-stream
 char read_one_byte(){
-    //from bluetooth to Terminal
     if (bt_serial.available()) return bt_serial.read(); 
     else return 0;
 }
@@ -234,7 +309,6 @@ void display_refresh(){
 
   // Check if awake/asleep
   set_awake();
-  
   switch (mode) {
     case 0:
       display_clock();
@@ -249,20 +323,14 @@ void display_refresh(){
 // Enables/Disables lights according to sleep schedule
 void set_awake(){
   DateTime now = rtc.now();
-  int h  = now.hour();
-  int m = now.minute();
+
+  int current_time = now.hour()*60 + now.minute();   
+  int awake = time_set[0]*60 + time_set[1];
+  int sleep = time_set[2]*60 + time_set[3];
   
-  if (h < time_set[0]){
-    c_on = c_off;
-  } else if (h == time_set[0] && m < time_set[1]){
-    c_on = c_off;
-  } else if (h == time_set[2] && m > time_set[3]){
-    c_on = c_off;
-  } else if (h > time_set[2]){
-    c_on = c_off;
-  } else {
-    c_on = c_saved;
-  }
+  if (current_time < awake or current_time >= sleep) c_on = c_off;
+  else c_on = c_saved;
+  
 }
 
 // Checks and sets time segments
@@ -326,8 +394,11 @@ void display_segments(int startindex, int number) {
   };
 
   for (int i = 0; i < 7; i++) {
-    LED[3*i + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? c_on : c_off;
-    // LED[3*i + 1 + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? c_on : c_off;
-    LED[3*i + 2 + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? c_on : c_off;
+    if (enabled[0] == 1) LED[3*i + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? c_on : c_off;
+    else LED[3*i + startindex] = c_off;
+    if (enabled[1] == 1) LED[3*i + 1 + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? c_on : c_off;
+    else LED[3*i + 1 + startindex] = c_off;
+    if (enabled[2] == 1) LED[3*i + 2 + startindex] = ((numbers[number] & 1 << i) == 1 << i) ? c_on : c_off;
+    else LED[3*i + 2 + startindex] = c_off;
   } 
 }
