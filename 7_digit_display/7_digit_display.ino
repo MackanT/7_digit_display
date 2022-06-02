@@ -87,7 +87,7 @@ char time_read[3];
 int time_set[4] = {07, 00, 22, 00};   // Default time to be awake
 int color[3] = {RED, GREEN, BLUE};    // Saved LED color
 int enabled[3] = {1, 0, 1};           // Saved LED states
-int mode = 0;                         // State, time, temp, humid
+int mode = 0;                         // State, time, temp, humid, date
 
   
 void setup() { 
@@ -105,6 +105,9 @@ void setup() {
     Serial.println("RTC lost power, lets set the time!");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
+
+  //rtc.setDate(1, 6, 2022);
+  //rtc.setDOW(WEDNESDAY);
 
   // Sets "extra" array position to 0 to avoid errors
   bt_buffer[3] = 0;
@@ -135,6 +138,10 @@ void read_bt(){
     case 'h':
       mode = 2;
       break;
+    // Date Mode
+    case 'm':
+      mode = 3;
+      break;
     // Help
     case 'q':
       print_help();
@@ -154,6 +161,9 @@ void read_bt(){
     // Set new clock time
     case 'r':
       set_time();
+      break;
+    case 'd':
+      set_date();
       break;
     // Ask system for info
     case '?':
@@ -176,6 +186,9 @@ void read_bt(){
           break;
         case 'l':
           print_enabled();
+          break;
+        case 'd':
+          print_date();
           break;
       }
      break;
@@ -202,6 +215,14 @@ void print_temp(){
   bt_serial.println("c");
 }
 
+// Prints temperature to BT-controller
+void print_date(){
+    char msg[24];
+    DateTime now = rtc.now();
+    sprintf(msg, "Current Date: %d %d", now.month(), now.day());
+    bt_serial.println(msg);
+}
+
 // Prints humidity to BT-controller
 void print_humid(){
   bt_serial.print(F("Current Humidity: "));
@@ -215,7 +236,6 @@ void print_time(){
     DateTime now = rtc.now();
     sprintf(msg, "Current System Time: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
     bt_serial.println(msg);
-
 }
 
 // Prints sleep/awake times to BT-controller
@@ -248,7 +268,24 @@ void set_time(){
     if (input_num[i] >= 60 or input_num[i] < 0) return;  
   }
   if (input_num[0] > 24) return;
-  rtc.adjust(DateTime(2021, 01, 01, input_num[0], input_num[1], input_num[2]));
+  DateTime now = rtc.now();
+  rtc.adjust(DateTime(now.year(), now.month(), now.day(), input_num[0], input_num[1], input_num[2]));  
+}
+
+// Reads input data from the BT-Device and sets calendar accordingly as yymmdd
+void set_date(){
+  delay(100);
+  int input_num[3]; 
+  for (i = 0; i < 3; i++) {
+    input_num[i] = get_num(2);
+  }
+
+  input_num[0] += 2000;
+  if (input_num[1] >= 12 or input_num[1] < 0) return;  
+  if (input_num[2] >= 31 or input_num[2] < 0) return;  
+  
+  DateTime now = rtc.now();
+  rtc.adjust(DateTime(input_num[0], input_num[1], input_num[2], now.hour(), now.minute(), now.second()));
    
 }
 
@@ -313,6 +350,9 @@ void display_refresh(){
     case 0:
       display_clock();
       break;
+    case 3:
+      display_date();
+      break;
     default:
       display_ht();
       break;
@@ -348,6 +388,22 @@ void display_clock(){
     // Blink dots
     LED[42] = (LED[42] == c_off) ? c_on : c_off;
     LED[43] = (LED[43] == c_off) ? c_on : c_off;
+}
+
+// Checks and sets date segments
+void display_date(){
+
+    DateTime now = rtc.now();
+
+    // Set digits
+    display_segments(P1, now.day() % 10);    
+    display_segments(P2, now.day() / 10);
+    display_segments(P3, now.month() % 10);    
+    display_segments(P4, now.month() / 10);
+
+    // Disable dots
+    LED[42] = c_off;
+    LED[43] = c_off;
 }
 
 // Checks and sets humidity segments
