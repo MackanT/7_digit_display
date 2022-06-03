@@ -219,7 +219,7 @@ void print_temp(){
 void print_date(){
     char msg[24];
     DateTime now = rtc.now();
-    sprintf(msg, "Current Date: %d %d", now.month(), now.day());
+    sprintf(msg, "Current Date: %02d %02d", now.month(), now.day());
     bt_serial.println(msg);
 }
 
@@ -255,7 +255,7 @@ void print_enabled(){
 // Prints diode color to BT-controller
 void print_color(){
   char msg[34];
-  sprintf(msg, "Print Color Set To: %d, %d, %d", color[0], color[1], color[2]);
+  sprintf(msg, "Print Color Set To: %03d, %03d, %03d", color[0], color[1], color[2]);
   bt_serial.println(msg);
 }
 

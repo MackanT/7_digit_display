@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Bluetooth</string>
+    <string name="on">ON</string>
+    <string name="off">OFF</string>
+    <string name="coverage">COVERAGE</string>
+    <string name="search">SEARCH</string>
+    <string name="action_settings">Settings</string>
+    <string name="send">send</string>
+</resources>
